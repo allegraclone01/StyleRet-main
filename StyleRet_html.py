@@ -6,16 +6,18 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from helpfunc_basis import *
+from helpfunc_barra import *
 from rqdatac import *
 
-from matplotlib import font_manager
-font_path = "fonts/SimHei.ttf"
-font_manager.fontManager.addfont(font_path)
-prop = font_manager.FontProperties(fname=font_path)
+# from matplotlib import font_manager
+# font_path = "fonts/SimHei.ttf"
+# font_manager.fontManager.addfont(font_path)
+# prop = font_manager.FontProperties(fname=font_path)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_FILE = os.path.join(BASE_DIR, "data_base", "fac_ret", "whole_mkt", "factor_returns_20_2603.pkl")
 BASIS_DIR = os.path.join(BASE_DIR, "data_base", "basis","index_future_basis_data.pkl")
+KJDIR = os.path.join(BASE_DIR, "data_base", "index")
 
 plt.rcParams["axes.unicode_minus"] = False
 
@@ -157,7 +159,7 @@ div[data-testid="metric-container"] div { font-size: 0.8rem !important; }
 st.title("行情面板")
 st.sidebar.header("配置")
 st.session_state.sd = st.sidebar.date_input("起始", pd.Timestamp("2020-01-02"), max_value=pd.Timestamp("2036-03-25"))
-st.session_state.ed = st.sidebar.date_input("结束", pd.Timestamp.now().normalize() - pd.Timedelta(days=1), max_value=pd.Timestamp("2036-03-25"))
+st.session_state.ed = st.sidebar.date_input("结束", last_trading_day(), max_value=pd.Timestamp("2036-03-25"))
 mode = st.sidebar.radio("模式", ["Barra大类综合", "Barra单因子详细", "基差成本监控"])
 
 sd = pd.Timestamp(st.session_state.sd)
@@ -218,11 +220,12 @@ cols = [c for c in df_full.columns if str(c).lower() != "comovement"]
 style_cols = [c for c in cols if not re.search(r"[\u4e00-\u9fff]", str(c))]
 industry_cols = [c for c in cols if re.search(r"[\u4e00-\u9fff]", str(c))]
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("开始时间", f"{df_view.index.min().date()}")
-c2.metric("结束时间", f"{df_view.index.max().date()}")
-c3.metric("交易日", len(df_view))
-c4.metric("因子", f"风格{len(style_cols)} / 行业{len(industry_cols)}")
+if mode != "基差成本监控":
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("开始时间", f"{df_view.index.min().date()}")
+    c2.metric("结束时间", f"{df_view.index.max().date()}")
+    c3.metric("交易日", len(df_view))
+    c4.metric("因子", f"风格{len(style_cols)} / 行业{len(industry_cols)}")
 
 if mode == "Barra大类综合":
     cat = st.radio("类别", ["风格因子", "行业因子"], horizontal=True)
@@ -309,6 +312,10 @@ if mode == "Barra大类综合":
         {"selector": "th", "props": [("text-align", "left"), ("font-weight", "bold")]},
     ]).to_html()
     st.markdown(f"""<div style="overflow-x:auto; width:100%;">{html}</div>""", unsafe_allow_html=True)
+
+    #风格因子相关性与 Beta（fragment：改窗口时仅重算此区域）
+    if cat == "风格因子":
+        corr_beta_section(df_view, style_cols, ed, KJDIR)
 
 elif mode == "基差成本监控":
     if df_basis.empty:
@@ -441,35 +448,6 @@ elif mode == "基差成本监控":
     if plot_sub.empty:
         st.warning("所选合约在当前日期区间内没有数据")
         st.stop()
-
-    # # 实时基差：一行表（不含列名）  order_book_id | index | datetime | index_px | future_px | basis | basis_rate | basis_annual_rate
-    # try:
-    #     #from rqdatac.futures import get_current_basis as _gcb
-    #     _cb = rqdatac.futures.get_current_basis(sel_id, market='cn')
-    #     if _cb is not None and not _cb.empty:
-    #         _row = _cb.iloc[0]
-    #         _fields = ["index", "datetime", "index_px", "future_px",
-    #                    "basis", "basis_rate", "basis_annual_rate"]
-    #         _obid = str(_row.name) if _row.name is not None else sel_id
-    #         _html = f'<table style="width:100%;border-collapse:collapse;font-size:0.75rem;white-space:nowrap;"><tr>'
-    #         _html += f'<td style="padding:4px 8px;text-align:left;font-weight:bold;border-bottom:1px solid #ccc;">{_obid}</td>'
-    #         for _k in _fields:
-    #             if _k in _row:
-    #                 _v = _row[_k]
-    #                 if isinstance(_v, (pd.Timestamp, np.datetime64)):
-    #                     _s = str(pd.Timestamp(_v)).split(".")[0]
-    #                 else:
-    #                     try:
-    #                         _s = f"{float(_v):.3f}"
-    #                     except Exception:
-    #                         _s = str(_v)
-    #             else:
-    #                 _s = "—"
-    #             _html += f'<td style="padding:4px 8px;text-align:right;border-bottom:1px solid #ccc;"><span style="color:#888;font-size:0.65rem;">{_k}:</span> {_s}</td>'
-    #         _html += "</tr></table>"
-    #         st.markdown(_html, unsafe_allow_html=True)
-    # except Exception as e:
-    #     print(e)
 
     y1 = plot_sub["abs_ratio"].values * 100
     y2 = plot_sub["ana_cost"].values * 100
