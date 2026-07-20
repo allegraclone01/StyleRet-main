@@ -9,6 +9,9 @@ from helpfunc_basis import *
 from helpfunc_barra import *
 from rqdatac import *
 
+st.write("rolling_corr_section exists:", "rolling_corr_section" in globals())
+st.write(globals().get("rolling_corr_section"))
+
 from matplotlib import font_manager
 font_path = "fonts/SimHei.ttf"
 font_manager.fontManager.addfont(font_path)
