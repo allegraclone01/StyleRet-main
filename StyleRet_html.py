@@ -9,10 +9,10 @@ from helpfunc_basis import *
 from helpfunc_barra import *
 from rqdatac import *
 
-# from matplotlib import font_manager
-# font_path = "fonts/SimHei.ttf"
-# font_manager.fontManager.addfont(font_path)
-# prop = font_manager.FontProperties(fname=font_path)
+from matplotlib import font_manager
+font_path = "fonts/SimHei.ttf"
+font_manager.fontManager.addfont(font_path)
+prop = font_manager.FontProperties(fname=font_path)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_FILE = os.path.join(BASE_DIR, "data_base", "fac_ret", "whole_mkt", "factor_returns_20_2603.pkl")
@@ -316,6 +316,7 @@ if mode == "Barra大类综合":
     #风格因子相关性与 Beta（fragment：改窗口时仅重算此区域）
     if cat == "风格因子":
         corr_beta_section(df_view, style_cols, ed, KJDIR)
+        rolling_corr_section(df_view, style_cols, sd, ed)
 
 elif mode == "基差成本监控":
     if df_basis.empty:
