@@ -8,10 +8,10 @@ import streamlit as st
 from helpfunc_basis import *
 from rqdatac import *
 
-# from matplotlib import font_manager
-# font_path = "fonts/SimHei.ttf"
-# font_manager.fontManager.addfont(font_path)
-# prop = font_manager.FontProperties(fname=font_path)
+from matplotlib import font_manager
+font_path = "fonts/SimHei.ttf"
+font_manager.fontManager.addfont(font_path)
+prop = font_manager.FontProperties(fname=font_path)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_FILE = os.path.join(BASE_DIR, "data_base", "fac_ret", "whole_mkt", "factor_returns_20_2603.pkl")
