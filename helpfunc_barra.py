@@ -93,6 +93,41 @@ def cal_style_corr(df: pd.DataFrame, style_cols=None, window=20,
 
     return pearson_corr, spearman_corr, fig
 
+
+def cal_rolling_corr(df, factor1, factor2, sd, ed, windows=(20, 40, 60)):
+    """
+    计算两个风格因子的滚动 Pearson 相关系数，绘制多窗口折线图。
+
+    :param df:       因子收益率 DataFrame，DatetimeIndex
+    :param factor1:  因子 1 列名
+    :param factor2:  因子 2 列名
+    :param sd:       起始日期
+    :param ed:       结束日期
+    :param windows:  回溯窗口（交易日数）元组
+    :return:         (rolling_corr_df, fig)
+    """
+    data = df.loc[sd:ed, [factor1, factor2]].dropna()
+
+    results = {}
+    for w in windows:
+        results[f"{w}d"] = data[factor1].rolling(w).corr(data[factor2])
+
+    corr_df = pd.DataFrame(results).dropna(how="all")
+
+    fig, ax = plt.subplots(figsize=(12, 4))
+    for col in corr_df.columns:
+        ax.plot(corr_df.index, corr_df[col], lw=1.2, label=col)
+    ax.axhline(0, color="gray", ls="--", lw=0.6, alpha=0.6)
+    ax.legend(loc="upper left")
+    ax.set_title(f"{factor1} vs {factor2}  —  Rolling Correlation")
+    ax.set_ylabel("Pearson r")
+    ax.grid(alpha=0.3)
+    fig.autofmt_xdate()
+    plt.tight_layout()
+
+    return corr_df, fig
+
+
 def cal_style_beta(df: pd.DataFrame, df_kj, ed, window=20, style_cols=None):
     """
     计算每个风格因子收益率对宽基指数收益率的一元线性回归 Beta 系数。
@@ -185,6 +220,24 @@ def corr_beta_section(df_view, style_cols, ed, kj_dir):
             st.markdown(f"""<div style="overflow-x:auto; width:100%;">{html_beta}</div>""", unsafe_allow_html=True)
         else:
             st.warning("宽基指数收益率数据缺失，无法计算 Beta")
+
+
+@st.fragment
+def rolling_corr_section(df_view, style_cols, sd, ed):
+    """fragment：切换因子时仅重跑此函数，其余页面不动"""
+    st.divider()
+    st.subheader("因子滚动相关性分析")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        factor1 = st.selectbox("因子 1", style_cols, key="rc_factor1")
+    with c2:
+        idx = min(1, len(style_cols) - 1)
+        factor2 = st.selectbox("因子 2", style_cols, index=idx, key="rc_factor2")
+
+    _, fig = cal_rolling_corr(df_view, factor1, factor2, sd, ed)
+    st.pyplot(fig)
+    plt.close(fig)
 
 
 if __name__ == "__main__":
