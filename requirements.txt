@@ -2,6 +2,7 @@ streamlit>=1.28
 pandas>=1.5
 numpy>=1.23
 matplotlib>=3.7
+seaborn>=0.13
 rqdatac
 configparser
 streamlit_change_language
