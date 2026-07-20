@@ -17,6 +17,18 @@ alldir = os.path.join(BASE_DIR, "data_base", "index_component_日频","866011.RI
 all_df = pd.read_pickle(alldir)
 all_ids = list(all_df.values())[-1].index.tolist()
 
+def last_trading_day(ref=None):
+    """返回最近一个完整交易日。周一时返回上周五，周日时返回上周五，其余返回前一天。"""
+    if ref is None:
+        ref = pd.Timestamp.now().normalize()
+    w = ref.weekday()  # 0=周一, 6=周日
+    if w == 0:
+        return ref - pd.Timedelta(days=3)
+    if w == 6:
+        return ref - pd.Timedelta(days=2)
+    return ref - pd.Timedelta(days=1)
+
+
 def add_basis_data(st,ed):
     df_future = all_instruments(type='Future')
     df_index = df_future[df_future["product"]=="Index"]
