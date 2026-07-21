@@ -96,21 +96,30 @@ def cal_style_corr(df: pd.DataFrame, style_cols=None, window=20,
 
 def cal_rolling_corr(df, factor1, factor2, sd, ed, windows=(20, 40, 60)):
     """
-    计算两个风格因子的滚动 Pearson 相关系数，绘制多窗口折线图。
+    计算风格因子的滚动 Pearson 相关系数，绘制折线图。
+
+    - 若 factor2 为具体因子名：factor1 vs factor2，多窗口（20/40/60d）
+    - 若 factor2 为 "所有_XXd"：factor1 vs 其余所有因子，单窗口 XXd
 
     :param df:       因子收益率 DataFrame，DatetimeIndex
     :param factor1:  因子 1 列名
-    :param factor2:  因子 2 列名
+    :param factor2:  因子 2 列名 或 "所有_20d" / "所有_40d" / "所有_60d"
     :param sd:       起始日期
     :param ed:       结束日期
-    :param windows:  回溯窗口（交易日数）元组
+    :param windows:  多窗口模式的回溯窗口
     :return:         (rolling_corr_df, fig)
     """
-    data = df.loc[sd:ed, [factor1, factor2]].dropna()
+    data = df.loc[sd:ed,STYLE_COLS]
 
-    results = {}
-    for w in windows:
-        results[f"{w}d"] = data[factor1].rolling(w).corr(data[factor2])
+    if isinstance(factor2, str) and factor2.startswith("所有_"):
+        w = int(factor2.split("_")[1].replace("d", ""))
+        others = [c for c in data.columns if c != factor1]
+        results = {o: data[factor1].rolling(w).corr(data[o]) for o in others}
+        title = f"{factor1} vs 所有因子  ({w}d 滚动相关)"
+    else:
+        sub = data[[factor1, factor2]].dropna()
+        results = {f"{w}d": sub[factor1].rolling(w).corr(sub[factor2]) for w in windows}
+        title = f"{factor1} vs {factor2}  —  Rolling Correlation"
 
     corr_df = pd.DataFrame(results).dropna(how="all")
 
@@ -118,8 +127,8 @@ def cal_rolling_corr(df, factor1, factor2, sd, ed, windows=(20, 40, 60)):
     for col in corr_df.columns:
         ax.plot(corr_df.index, corr_df[col], lw=1.2, label=col)
     ax.axhline(0, color="gray", ls="--", lw=0.6, alpha=0.6)
-    ax.legend(loc="upper left")
-    ax.set_title(f"{factor1} vs {factor2}  —  Rolling Correlation")
+    ax.legend(loc="upper left", fontsize=7.5, ncol=2)
+    ax.set_title(title)
     ax.set_ylabel("Pearson r")
     ax.grid(alpha=0.3)
     fig.autofmt_xdate()
@@ -228,12 +237,14 @@ def rolling_corr_section(df_view, style_cols, sd, ed):
     st.divider()
     st.subheader("因子滚动相关性分析")
 
+    factor2_opts = list(style_cols) + ["所有_20d", "所有_40d", "所有_60d"]
+
     c1, c2 = st.columns(2)
     with c1:
         factor1 = st.selectbox("因子 1", style_cols, key="rc_factor1")
     with c2:
-        idx = min(1, len(style_cols) - 1)
-        factor2 = st.selectbox("因子 2", style_cols, index=idx, key="rc_factor2")
+        factor2 = st.selectbox("因子 2", factor2_opts, index=min(1, len(style_cols) - 1),
+                               key="rc_factor2")
 
     _, fig = cal_rolling_corr(df_view, factor1, factor2, sd, ed)
     st.pyplot(fig)
