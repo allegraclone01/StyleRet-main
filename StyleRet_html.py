@@ -314,9 +314,9 @@ if mode == "Barra大类综合":
     st.markdown(f"""<div style="overflow-x:auto; width:100%;">{html}</div>""", unsafe_allow_html=True)
 
     #风格因子相关性与 Beta（fragment：改窗口时仅重算此区域）
-    if cat == "风格因子":
-        corr_beta_section(df_view, style_cols, ed, KJDIR)
-        rolling_corr_section(df_view, style_cols, sd, ed)
+    # if cat == "风格因子":
+        # corr_beta_section(df_view, style_cols, ed, KJDIR)
+        # rolling_corr_section(df_view, style_cols, sd, ed)
 
 elif mode == "基差成本监控":
     if df_basis.empty:
