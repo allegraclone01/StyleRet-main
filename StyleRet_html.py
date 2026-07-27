@@ -204,7 +204,7 @@ if mode == "基差成本监控":
                 df_basis = (df_basis.drop_duplicates(keep="last")
                                     .sort_values(["order_book_id", "date"])
                                     .set_index("order_book_id"))
-                print(df_basis)
+                print(df_basis.tail())
                 os.makedirs(os.path.dirname(BASIS_DIR), exist_ok=True)
                 pd.to_pickle(df_basis, BASIS_DIR)
                 print(f"基差数据更新完成: {df_basis['date'].max().date()}")
@@ -314,9 +314,9 @@ if mode == "Barra大类综合":
     st.markdown(f"""<div style="overflow-x:auto; width:100%;">{html}</div>""", unsafe_allow_html=True)
 
     #风格因子相关性与 Beta（fragment：改窗口时仅重算此区域）
-    # if cat == "风格因子":
-        # corr_beta_section(df_view, style_cols, ed, KJDIR)
-        # rolling_corr_section(df_view, style_cols, sd, ed)
+    if cat == "风格因子":
+        corr_beta_section(df_view, style_cols, ed, KJDIR)
+        rolling_corr_section(df_view, style_cols, sd, ed)
 
 elif mode == "基差成本监控":
     if df_basis.empty:
@@ -450,56 +450,10 @@ elif mode == "基差成本监控":
         st.warning("所选合约在当前日期区间内没有数据")
         st.stop()
 
-    y1 = plot_sub["abs_ratio"].values * 100
-    y2 = plot_sub["ana_cost"].values * 100
-    fig, ax = plt.subplots(figsize=(14, 6))
-    ax.plot(plot_sub["date"].values, y1, color="#1f77b4", lw=2, label="abs_ratio (%)")
-    ax2 = ax.twinx()
-    ax2.plot(plot_sub["date"].values, y2, color="#ff7f0e", lw=2, label="ana_cost (%)")
-    ax.set_title(f"基差成本监控 — {sel_id}")
-    ax.set_xlabel("date")
-    ax.set_ylabel("abs_ratio (%)", color="#1f77b4")
-    ax2.set_ylabel("ana_cost (%)", color="#ff7f0e")
-    ax.tick_params(axis="y", labelcolor="#1f77b4")
-    ax2.tick_params(axis="y", labelcolor="#ff7f0e")
-
-    lines1, labels1 = ax.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax.legend(lines1 + lines2, labels1 + labels2, fontsize=9, loc="best")
-    ax.grid(alpha=0.3)
-    fig.autofmt_xdate()
+    fig, tbl_html = plot_basis_series(plot_sub, contract_id=sel_id,mode="adjust")
     st.pyplot(fig)
     plt.close(fig)
-
-    # 转置展示：一个指标一行，一个日期一列；列多时按段S型纵向拼接
-    tbl_b = plot_sub[["date", "abs_ratio", "ana_cost"]].copy()
-    tbl_b["date"] = tbl_b["date"].dt.strftime("%Y-%m-%d")
-    tbl_b["abs_ratio(%)"] = tbl_b["abs_ratio"] * 100
-    tbl_b["ana_cost(%)"] = tbl_b["ana_cost"] * 100
-    tbl_b = tbl_b[["date", "abs_ratio(%)", "ana_cost(%)"]].round(3).tail(30)
-    tbl_b = tbl_b.sort_values("date").reset_index(drop=True)
-    _wide = tbl_b.set_index("date").T
-    _wide.index.name = None
-    _total_cols = list(_wide.columns)
-
-    _cols_per_seg = 20
-    _seg_count = (len(_total_cols) + _cols_per_seg - 1) // _cols_per_seg
-
-    for _si in range(_seg_count):
-        _seg_cols = _total_cols[_si * _cols_per_seg:(_si + 1) * _cols_per_seg]
-        _seg = _wide[_seg_cols]
-
-        _html = (_seg.style.format("{:.3f}").set_table_styles([
-            {"selector": "td, th", "props": [("padding", "3px 6px"),
-                                            ("text-align", "right"),
-                                            ("font-size", "0.8rem"),
-                                            ("white-space", "nowrap")]},
-            {"selector": "th.row_heading", "props": [("text-align", "left"),
-                                                    ("font-weight", "bold")]},
-        ]).to_html())
-        st.markdown(
-            f"""<div style="overflow-x:auto; width:100%; margin-bottom:8px;">{_html}</div>""",
-            unsafe_allow_html=True)
+    st.markdown(tbl_html, unsafe_allow_html=True)
 
 else:
     sub_cat = st.radio("类型", ["风格因子", "行业因子"], horizontal=True)
