@@ -18,9 +18,12 @@ dpsdir = os.path.join(BASE_DIR, "data_base", "basis","866011.RI_dps_22_25H.pkl")
 #df_dps = pd.read_pickle(dpsdir)
 timedir = os.path.join(BASE_DIR, "data_base", "basis","dividend_timeline.pkl")
 #df_time = pd.read_pickle(timedir)
-alldir = os.path.join(BASE_DIR, "data_base", "index_component_日频","866011.RI_20_26D_dict.pkl")
-all_df = pd.read_pickle(alldir)
-all_ids = list(all_df.values())[-1].index.tolist()
+def get_all_ids(md):
+    """获取866011.RI指数在指定日期的成分股列表"""
+    end = pd.Timestamp(md).strftime("%Y%m%d")
+    df = index_weights("866011.RI", start_date=end, end_date=end, market="cn")
+    ids = df.index.get_level_values("order_book_id").tolist()
+    return ids
 
 def last_trading_day(ref=None):
     """返回最近一个完整交易日。周一时返回上周五，周日时返回上周五，其余返回前一天。"""
@@ -161,7 +164,9 @@ def get_index_d(dt):
 
     return df_index
 
-def update_dps(dt):
+def update_dps(dt, stock_ids=None):
+    if stock_ids is None:
+        stock_ids = get_all_ids(dt)
     _dps_old = pd.read_pickle(dpsdir) if os.path.exists(dpsdir) else pd.DataFrame()
     #_date_col = "ex_dividend_date"
     # 确定增量起点
@@ -171,7 +176,7 @@ def update_dps(dt):
         _start = pd.Timestamp("2024-06-30")
     _end = pd.Timestamp(dt)
     if _start <= _end:
-        _dps_new = get_dividend(all_ids,start_date=_start.strftime("%Y%m%d"),end_date=_end.strftime("%Y%m%d"),expect_df=True, market='cn')
+        _dps_new = get_dividend(stock_ids,start_date=_start.strftime("%Y%m%d"),end_date=_end.strftime("%Y%m%d"),expect_df=True, market='cn')
         if isinstance(_dps_new, pd.DataFrame) and not _dps_new.empty:
             _n_old = len(_dps_old)
             _dps_old = _dps_old.drop_duplicates()  # 先清历史重复，避免干扰计数
@@ -181,12 +186,14 @@ def update_dps(dt):
     _dps_old.to_pickle(dpsdir)
     return _dps_old
 
-def update_eps(end_q):
+def update_eps(end_q, stock_ids=None):
+    if stock_ids is None:
+        stock_ids = get_all_ids(pd.Timestamp.now())
     #增量更新 eps：读老数据 → 取老数据最大 quarter → 从下一季度拉到 end_q → 合并去重存回
     _eps_old = pd.read_pickle(epsdir) if os.path.exists(epsdir) else pd.DataFrame()
 
     _start_q = "2025q4"
-    _new = get_pit_financials_ex(all_ids, ["basic_earnings_per_share"],start_quarter=_start_q, end_quarter=end_q,date=None, statements='latest', market='cn')
+    _new = get_pit_financials_ex(stock_ids, ["basic_earnings_per_share"],start_quarter=_start_q, end_quarter=end_q,date=None, statements='latest', market='cn')
 
     if isinstance(_new, pd.DataFrame) and not _new.empty:
         _n_old = len(_eps_old)
@@ -198,12 +205,14 @@ def update_eps(end_q):
 
     return _eps_old
 
-def update_timeline(end_q):
+def update_timeline(end_q, stock_ids=None):
+    if stock_ids is None:
+        stock_ids = get_all_ids(pd.Timestamp.now())
     #增量更新 分红时间时间线：读老数据 → 取老数据最大 quarter → 从下一季度拉到 end_q → 合并去重存回
     _time_old = pd.read_pickle(timedir) if os.path.exists(timedir) else pd.DataFrame()
 
     _start_q = "2025q4"
-    _new = get_dividend_amount(all_ids, start_quarter = _start_q, end_quarter = end_q, date = None, market = 'cn')
+    _new = get_dividend_amount(stock_ids, start_quarter = _start_q, end_quarter = end_q, date = None, market = 'cn')
 
     if isinstance(_new, pd.DataFrame) and not _new.empty:
         _n_old = len(_time_old)
@@ -223,9 +232,11 @@ def cal_fhds(dt, new, return_detail=False):
     _y = pd.Timestamp(dt).year
     quarter_list = [f"{_y - 1}q2", f"{_y - 1}q4", f"{_y}q2"]
 
-    _dps = update_dps(dt)
-    _eps = update_eps(quarter_list[-1])
-    _time = update_timeline(quarter_list[-1])
+    stock_ids = get_all_ids(dt)
+
+    _dps = update_dps(dt, stock_ids)
+    _eps = update_eps(quarter_list[-1], stock_ids)
+    _time = update_timeline(quarter_list[-1], stock_ids)
 
     global df_dps, df_eps, df_time
     df_dps = _dps

@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 from helpfunc_basis import *
 from helpfunc_barra import *
+from helpfunc_vol import *
 from rqdatac import *
 
 from matplotlib import font_manager
@@ -160,7 +161,7 @@ st.title("行情面板")
 st.sidebar.header("配置")
 st.session_state.sd = st.sidebar.date_input("起始", pd.Timestamp("2020-01-02"), max_value=pd.Timestamp("2036-03-25"))
 st.session_state.ed = st.sidebar.date_input("结束", last_trading_day(), max_value=pd.Timestamp("2036-03-25"))
-mode = st.sidebar.radio("模式", ["Barra大类综合", "Barra单因子详细", "基差成本监控"])
+mode = st.sidebar.radio("模式", ["Barra大类综合", "Barra单因子详细", "基差成本监控", "全市场波动"])
 
 sd = pd.Timestamp(st.session_state.sd)
 ed = pd.Timestamp(st.session_state.ed)
@@ -221,11 +222,11 @@ style_cols = [c for c in cols if not re.search(r"[\u4e00-\u9fff]", str(c))]
 industry_cols = [c for c in cols if re.search(r"[\u4e00-\u9fff]", str(c))]
 
 if mode != "基差成本监控":
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3 = st.columns(3)
     c1.metric("开始时间", f"{df_view.index.min().date()}")
     c2.metric("结束时间", f"{df_view.index.max().date()}")
     c3.metric("交易日", len(df_view))
-    c4.metric("因子", f"风格{len(style_cols)} / 行业{len(industry_cols)}")
+
 
 if mode == "Barra大类综合":
     cat = st.radio("类别", ["风格因子", "行业因子"], horizontal=True)
@@ -454,6 +455,89 @@ elif mode == "基差成本监控":
     st.pyplot(fig)
     plt.close(fig)
     st.markdown(tbl_html, unsafe_allow_html=True)
+
+elif mode == "全市场波动":
+    CACHE_DIR = os.path.join(os.path.dirname(__file__), "data_base", "volatility", "output")
+    os.makedirs(CACHE_DIR, exist_ok=True)
+
+    # 用户选择
+    _c1, _c2, _c3 = st.columns(3)
+    with _c1:
+        _freq = st.radio("频率", ["daily", "weekly"], horizontal=True)
+    with _c2:
+        _uni_opts = ["全A", "沪深300", "中证500", "中证1000", "中证2000","上证50"]
+        _uni_opts += ['石油石化', '煤炭', '有色金属', '电力及公用事业', '钢铁', '基础化工', '建筑', '建材', '轻工制造',
+       '机械', '电力设备及新能源', '国防军工', '汽车', '商贸零售', '消费者服务', '家电', '纺织服装',
+       '医药', '食品饮料', '农林牧渔', '银行', '非银行金融', '房地产', '综合金融', '交通运输', '电子',
+       '通信', '计算机', '传媒', '综合']
+        _universe = st.selectbox("分域", _uni_opts)
+    with _c3:
+        _weighted = st.radio("加权", ["等权", "加权"], horizontal=True) == "加权"
+
+	    # ── 内存缓存（切换下拉框后回来直接秒出）──
+    _tag = f"{'w' if _weighted else 'ew'}"
+    _cache_path = os.path.join(CACHE_DIR, f"{_freq}_{_universe}_{_tag}.pkl")
+    _data_key = f"vol_data_{_freq}_{_universe}_{_tag}"       # 全量数据（与日期无关）
+
+    # MA 均线选择
+    _ma_opts = [5, 20, 60] if _freq == "daily" else [4, 13, 52]
+    _ma_windows = st.multiselect("MA", _ma_opts, [], key=f"ma_{_data_key}")
+    _ma_tuple = tuple(sorted(_ma_windows))
+
+    _view_key = f"vol_view_{_freq}_{_universe}_{_tag}_{sd.date()}_{ed.date()}_{_ma_tuple}"
+
+    # ① 全量数据：内存 > 磁盘 > 从头计算
+    if _data_key in st.session_state:
+        cached = st.session_state[_data_key]
+    else:
+        update_Aret(ed)
+        if os.path.exists(_cache_path):
+            cached = pd.read_pickle(_cache_path)
+            _calc_start = cached.index.max() + pd.Timedelta(days=1)
+        else:
+            cached = pd.DataFrame()
+            _calc_start = sd
+
+        if _calc_start <= ed:
+            with st.spinner(f"计算 {_universe} {_freq} {_tag}（{_calc_start.date()} ~ {ed.date()}）…"):
+                new_df = calc_cs_stats(_freq, start=_calc_start, end=ed,
+                                       universe=_universe, weighted=_weighted)
+            cached = pd.concat([cached, new_df])
+            cached = cached[~cached.index.duplicated(keep="last")].sort_index()
+            cached.to_pickle(_cache_path)
+        st.session_state[_data_key] = cached
+
+    # ② 视图（figs + 表格）：命中则跳过画图，否则重新生成
+    if _view_key in st.session_state:
+        figs, _tbl, csv, _fname = st.session_state[_view_key]
+        st.info("📋 配置未变，从内存直接展示")
+    else:
+        _display = cached.loc[pd.Timestamp(sd):pd.Timestamp(ed)]
+        if _display.empty:
+            st.warning("所选区间无数据")
+            st.stop()
+
+        _lookback = 252 if _freq == "daily" else 52
+        _pct = calc_vol_percentile(cached["cs_vol"], window=_lookback)
+        _pct_display = _pct.loc[_display.index]
+
+        figs = plot_vol_series(_display, _pct_display, _freq, ma_windows=_ma_windows or None, full_vol=cached["cs_vol"])
+        _tbl = _display.reset_index()
+        csv = _tbl.to_csv(index=False).encode("utf-8-sig")
+        _fname = f"cs_vol_{_freq}_{_universe}_{_tag}_{sd.date()}_{ed.date()}.csv"
+        st.session_state[_view_key] = (figs, _tbl, csv, _fname)
+
+    # ── 展示 ──
+    for _key, _title in [("vol", "绝对波动"), ("rank", "历史排位"), ("adr", "ADR")]:
+        st.markdown(f"**{_title}**")
+        st.pyplot(figs[_key])
+
+    st.markdown("---")
+    st.markdown("**统计指标**")
+    _num_cols = _tbl.select_dtypes(include=[np.number]).columns.tolist()
+    st.dataframe(_tbl.style.format({c: "{:.4f}" for c in _num_cols}, na_rep="-"),
+                 use_container_width=True, height=400)
+    st.download_button("下载 CSV", csv, _fname, "text/csv")
 
 else:
     sub_cat = st.radio("类型", ["风格因子", "行业因子"], horizontal=True)
