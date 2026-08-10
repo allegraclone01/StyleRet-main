@@ -468,11 +468,20 @@ def plot_vol_series(stats, pct_rank, freq="daily", ma_windows=None, full_vol=Non
     ax2.grid(alpha=0.25)
     _fmt_dates(ax2)
 
-    # ===== Fig 3: log ADR =====
+    # ===== Fig 3: log ADR（含 MA）=====
     fig3, ax3 = plt.subplots(**common)
-    ax3.fill_between(x, stats["log_adr"], alpha=0.12, color="#2ca02c")
-    ax3.plot(x, stats["log_adr"], color="#2ca02c", lw=1.2)
+    # ax3.fill_between(x, stats["log_adr"], alpha=0.12, color="#2ca02c")
+    # ax3.plot(x, stats["log_adr"], color="#2ca02c", lw=1.2, label="log ADR")
     ax3.axhline(0, color="gray", ls="--", lw=0.8)
+
+    # MA 均线：日频 [5, 20]，周频 [4, 12]
+    adr_windows = [5, 20] if freq == "daily" else [4, 12]
+    adr_ma_colors = ["#7EC47D", "#216237"]
+    for w, color in zip(adr_windows, adr_ma_colors):
+        ma = stats["log_adr"].rolling(w).mean()
+        ax3.plot(x, ma.values, color=color, lw=1.6, label=f"MA{w}")
+    ax3.legend(fontsize=8, loc="upper left")
+
     ax3.set_ylabel("log ADR")
     # 右轴：累计净值（从 ret 实时计算，展示区间起点归一为 1）
     if "ret" in stats.columns:
