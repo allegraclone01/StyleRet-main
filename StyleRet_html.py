@@ -16,7 +16,7 @@ font_manager.fontManager.addfont(font_path)
 prop = font_manager.FontProperties(fname=font_path)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CACHE_FILE = os.path.join(BASE_DIR, "data_base", "fac_ret", "whole_mkt", "factor_returns_20_2603.pkl")
+CACHE_FILE = os.path.join(BASE_DIR, "data_base", "fac_ret", "whole_mkt", "factor_returns_10_2608.pkl")
 BASIS_DIR = os.path.join(BASE_DIR, "data_base", "basis","index_future_basis_data.pkl")
 KJDIR = os.path.join(BASE_DIR, "data_base", "index")
 
@@ -237,6 +237,9 @@ if mode == "Barra大类综合":
     nav = nav / nav.iloc[0]
     order = nav.iloc[-1].sort_values(ascending=False).index
 
+    if cat == "风格因子":
+        render_style_volatility_section(df_view, style_cols, sd, ed)
+
     today_idx = nav.index
     today = today_idx[-1]
 
@@ -270,10 +273,6 @@ if mode == "Barra大类综合":
     month_ret = df_view.loc[curr_month_start:today, target]
     vol = month_ret.std()
 
-    #核算
-    print(week_start, month_start, curr_month_start,today)
-
-
     tbl = pd.DataFrame({
         "最新净值": latest_nav,
         "1日收益": ret_1d * 100,
@@ -284,7 +283,6 @@ if mode == "Barra大类综合":
     }).round(4)
     tbl = tbl.reindex(order)
 
-    #基础净值曲线展示
     fig, ax = plt.subplots(figsize=(12, 6))
     for c in order:
         ax.plot(nav.index, nav[c], label=str(c), lw=1.2)
@@ -297,7 +295,6 @@ if mode == "Barra大类综合":
     st.pyplot(fig)
     plt.close(fig)
 
-    #具体数据表格展示
     bar_cols = ["1日收益", "本周累计", "本月累计"]
     styled = tbl.style.format({
         "最新净值": "{:.4f}",
@@ -314,7 +311,6 @@ if mode == "Barra大类综合":
     ]).to_html()
     st.markdown(f"""<div style="overflow-x:auto; width:100%;">{html}</div>""", unsafe_allow_html=True)
 
-    #风格因子相关性与 Beta（fragment：改窗口时仅重算此区域）
     if cat == "风格因子":
         corr_beta_section(df_view, style_cols, ed, KJDIR)
         rolling_corr_section(df_view, style_cols, sd, ed)
@@ -546,7 +542,7 @@ else:
     ret = df_view[factor].dropna()
     nav = (ret + 1).cumprod()
     nav = nav / nav.iloc[0] #净值归1
-    ref = df_full[(df_full.index >= pd.Timestamp("2020-01-02")) & (df_full.index <= ed)][factor].dropna()
+    ref = df_full[(df_full.index >= sd) & (df_full.index <= ed)][factor].dropna()
     ref_vals = ref.values
     pct = ret.apply(lambda x: float((ref_vals < x).sum()) / len(ref_vals) * 100)
 
@@ -574,27 +570,36 @@ else:
     st.pyplot(fig)
     plt.close(fig)
 
-    # 单因子指标表：5个最近交易日 + 近20/60日区间
-    row_labels = []
-    ret_list = []
-    pct_list = []
-    z_list = []
+    row_labels, ret_list, pct_list, z_list = [], [], [], []
+    vol_list, z250_list, z750_list, rank250_list, rank750_list = [], [], [], [], []
     hist_full = ref.values    # 2020-01-02 起的完整日收益
     hist_mean = hist_full.mean()
     hist_std = hist_full.std()
 
-    # 最近第1~5个交易日（单日）
-    for k in range(1, 6):
+    vol_metrics = cal_factor_volatility(df_view, cols=style_cols) if sub_cat == "风格因子" else None
+    if vol_metrics is not None:
+        vol_df = vol_metrics["vol"]
+        rank250_df = vol_metrics["rank_250d"]
+        rank750_df = vol_metrics["rank_750d"]
+        z250_df = vol_metrics["z_250d"]
+        z750_df = vol_metrics["z_750d"]
+    for k in range(1, 21):
         if len(ret) < k:
             break
         idx = ret.index[-k]
         r_val = ret.iloc[-k]
-        p_val = float((hist_full < r_val).sum()) / len(hist_full) * 100
+        p_val = float((hist_full < r_val).sum()) / len(hist_full) 
         z_val = (r_val - hist_mean) / hist_std if hist_std > 0 else np.nan
         row_labels.append(f"最近第{k}日 ({idx.strftime('%Y-%m-%d')})")
         ret_list.append(r_val * 100)
         pct_list.append(p_val)
         z_list.append(z_val)
+        if sub_cat == "风格因子":
+            vol_list.append(vol_df.loc[idx, factor])
+            z250_list.append(z250_df.loc[idx, factor])
+            z750_list.append(z750_df.loc[idx, factor])
+            rank250_list.append(rank250_df.loc[idx, factor])
+            rank750_list.append(rank750_df.loc[idx, factor])
 
     # 近20 / 近60日区间（累计收益）
     for window in [20, 60]:
@@ -603,6 +608,11 @@ else:
             ret_list.append(np.nan)
             pct_list.append(np.nan)
             z_list.append(np.nan)
+            vol_list.append(np.nan)
+            z250_list.append(np.nan)
+            z750_list.append(np.nan)
+            rank250_list.append(np.nan)
+            rank750_list.append(np.nan)
             continue
         cur_ret = nav.iloc[-1] / nav.iloc[-(window + 1)] - 1
 
@@ -616,7 +626,7 @@ else:
                     rolling_rets.append(ref_nav.iloc[i] / ref_nav.iloc[i - window] - 1)
             if len(rolling_rets) > 0:
                 rarr = np.array(rolling_rets)
-                cur_pct = float((rarr < cur_ret).sum()) / len(rarr) * 100
+                cur_pct = float((rarr < cur_ret).sum()) / len(rarr)
                 cur_z = (cur_ret - rarr.mean()) / rarr.std() if rarr.std() > 0 else np.nan
             else:
                 cur_pct = np.nan
@@ -629,21 +639,42 @@ else:
         ret_list.append(cur_ret * 100)
         pct_list.append(cur_pct)
         z_list.append(cur_z)
+        vol_list.append(np.nan)
+        z250_list.append(np.nan)
+        z750_list.append(np.nan)
+        rank250_list.append(np.nan)
+        rank750_list.append(np.nan)
 
     tbl_single = pd.DataFrame({
         "收益率(%)": ret_list,
-        "历史分位数(%)": pct_list,
-        "z值": z_list,
-    }, index=row_labels).round(3)
+        "收益率历史分位数(%)": pct_list,
+        "收益率z值": z_list,
+        **({
+            "vol": vol_list,
+            "z_250d": z250_list,
+            "z_750d": z750_list,
+            "波动率分位数250(%)": rank250_list,
+            "波动率分位数750(%)": rank750_list,
+        } if sub_cat == "风格因子" else {}),
+    }, index=row_labels).round(4)
 
     bar_s_cols = ["收益率(%)"]
-    styled_single = tbl_single.style.format({
+    pct_s_cols = ["收益率历史分位数(%)"] + (["波动率分位数250(%)", "波动率分位数750(%)"] if sub_cat == "风格因子" else [])
+    fmt_map = {
         "收益率(%)": "{:.3f}%",
-        "历史分位数(%)": "{:.2f}",
-        "z值": "{:.3f}",
-    }, na_rep="-")
-    #styled_single = styled_single.bar(subset=bar_s_cols, align="zero",
-    #                                  color=["#d65f5f", "#5fba7d"])
+        "收益率历史分位数(%)": "{:.2%}",
+        "收益率z值": "{:.3f}",
+    }
+    if sub_cat == "风格因子":
+        fmt_map.update({
+            "vol": "{:.2%}",
+            "z_250d": "{:.3f}",
+            "z_750d": "{:.3f}",
+            "波动率分位数250(%)": "{:.2%}",
+            "波动率分位数750(%)": "{:.2%}",
+        })
+    styled_single = tbl_single.style.format(fmt_map, na_rep="-")
+    styled_single = styled_single.bar(subset=pct_s_cols, color="#d65f5f", vmin=0, vmax=1)
     html_s = styled_single.set_table_styles([
         {"selector": "td, th", "props": [("padding", "5px 10px"), ("text-align", "right"), ("white-space", "nowrap")]},
         {"selector": "th", "props": [("text-align", "left"), ("font-weight", "bold")]},

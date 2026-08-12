@@ -193,7 +193,7 @@ def update_eps(end_q, stock_ids=None):
     _eps_old = pd.read_pickle(epsdir) if os.path.exists(epsdir) else pd.DataFrame()
 
     _start_q = "2025q4"
-    _new = get_pit_financials_ex(stock_ids, ["basic_earnings_per_share"],start_quarter=_start_q, end_quarter=end_q,date=None, statements='latest', market='cn')
+    _new = get_pit_financials_ex(stock_ids, ["basic_earnings_per_share","net_profit"],start_quarter=_start_q, end_quarter=end_q,date=None, statements='latest', market='cn')
 
     if isinstance(_new, pd.DataFrame) and not _new.empty:
         _n_old = len(_eps_old)
