@@ -6,6 +6,7 @@ import seaborn as sns
 import streamlit as st
 from rqdatac import *
 import matplotlib.pyplot as plt
+from matplotlib.ticker import PercentFormatter
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -100,11 +101,13 @@ def cal_style_corr(df: pd.DataFrame, style_cols=None, window=20,
 
 
 @st.cache_data(show_spinner=False)
-def cal_factor_volatility(df: pd.DataFrame, cols=None, vol_window=20, hist_windows=(250, 750)):
-    """计算每个 Barra 因子的日波动率、历史分位数和 z 值。"""
+def cal_factor_volatility(df: pd.DataFrame, cols=None, vol_window=10, hist_windows=(250, 750), annualize=True, annual_factor=252):
+    """计算每个 Barra 因子的波动率、历史分位数和 z 值。"""
     if cols is None:
         cols = STYLE_COLS
     vol = df[cols].rolling(vol_window).std()
+    if annualize:
+        vol = vol * np.sqrt(annual_factor)
     out = {"vol": vol}
     for w in hist_windows:
         out[f"rank_{w}d"] = vol.rolling(w, min_periods=w).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
@@ -115,6 +118,7 @@ def cal_factor_volatility(df: pd.DataFrame, cols=None, vol_window=20, hist_windo
 def render_style_volatility_section(df_view, style_cols, sd, ed, key="barra_vol_date"):
     vol_ret = cal_factor_volatility(df_view[style_cols])
     vol_df = vol_ret["vol"]
+    #vol_ma_df = vol_df.rolling(5, min_periods=1).mean()
     opts = [d.date().isoformat() for d in vol_df.index if pd.notna(d) and d <= ed and d >= sd]
     picked = st.multiselect("查看日期（可额外选1-3个）", opts, default=[], key=key, max_selections=3)
     extra_dates = [pd.Timestamp(d) for d in picked if pd.Timestamp(d) != pd.Timestamp(ed)]
@@ -127,16 +131,37 @@ def render_style_volatility_section(df_view, style_cols, sd, ed, key="barra_vol_
         show_df[(d, "rank_750d")] = vol_ret["rank_750d"].loc[d, style_cols]
         show_df[(d, "z_250d")] = vol_ret["z_250d"].loc[d, style_cols]
         show_df[(d, "z_750d")] = vol_ret["z_750d"].loc[d, style_cols]
-    fig, ax = plt.subplots(figsize=(12, 4))
-    for c in style_cols:
-        ax.plot(vol_df.index, vol_df[c], lw=1.2, label=str(c))
-    ax.set_title("Barra因子20日波动率")
-    ax.grid(alpha=0.3)
-    ax.legend(loc="upper left", bbox_to_anchor=(-0.15, 1), fontsize=7.5, ncol=1)
-    ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=[3, 6, 9, 12]))
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y%m'))
-    ax.tick_params(axis='x', labelsize=6)
-    fig.autofmt_xdate(); st.pyplot(fig); plt.close(fig)
+
+    hist_max = vol_df[style_cols].max().sort_values(ascending=False)
+    grouped_cols = np.array_split(hist_max.index.tolist(), 3)
+
+    fig, axes = plt.subplots(3, 1, figsize=(12, 16/3), sharex=True)
+    fig.suptitle("高&中&低波组 | barra因子近10日波动率（年化）", fontsize=14)
+    palette = sns.color_palette("tab10", n_colors=len(style_cols))
+    color_map = {c: palette[i] for i, c in enumerate(style_cols)}
+    groups = [
+        (axes[0], list(grouped_cols[0])),
+        (axes[1], list(grouped_cols[1])),
+        (axes[2], list(grouped_cols[2])),
+    ]
+    for i, (ax, group_cols) in enumerate(groups):
+        for c in group_cols:
+            ax.plot(vol_df.index, vol_df[c], lw=1.2, label=str(c), color=color_map[c])
+        ax.yaxis.set_major_formatter(PercentFormatter(1.0))
+        ax.grid(alpha=0.3)
+        if group_cols:
+            ax.legend(loc="upper left", bbox_to_anchor=(-0.16, 1.0), fontsize=5, ncol=1, framealpha=0.9)
+        ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=[3, 6, 9, 12]))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y%m'))
+        ax.tick_params(axis='y', pad=8)
+        if i < len(groups) - 1:
+            ax.tick_params(axis='x', labelbottom=False)
+        else:
+            ax.tick_params(axis='x', labelsize=6, rotation=30)
+    fig.subplots_adjust(left=0.16, hspace=0.10, top=0.88, bottom=0.10)
+    st.pyplot(fig)
+    plt.close(fig)
+
     styled = show_df.style.format(lambda v: "-" if pd.isna(v) else f"{v:.2%}" if isinstance(v, (float, np.floating)) and 0 <= v <= 1 else f"{v:.4f}")
     try:
         styled = styled.bar(subset=pd.IndexSlice[:, pd.IndexSlice[:, ["rank_250d", "rank_750d"]]], color="#d65f5f", vmin=0, vmax=1)
@@ -144,6 +169,46 @@ def render_style_volatility_section(df_view, style_cols, sd, ed, key="barra_vol_
         pass
     html = styled.set_table_styles([{ "selector": "td, th", "props": [("padding", "5px 10px"), ("text-align", "right"), ("white-space", "nowrap")] },{ "selector": "th", "props": [("text-align", "left"), ("font-weight", "bold")] }]).to_html()
     st.markdown(f"<div style='overflow-x:auto; width:100%;'>{html}</div>", unsafe_allow_html=True)
+
+def cal_factor_volatility_multi(df: pd.DataFrame, factor_cols, windows=(10,20)):
+    factor_cols = list(factor_cols)
+    return {
+        w: cal_factor_volatility(df, cols=factor_cols, vol_window=w, hist_windows=())["vol"]
+        for w in windows
+    }
+
+
+def plot_factor_volatility_multiwindow(df: pd.DataFrame, factor_cols, start=None, end=None, windows=(10,20)):
+    factor_cols = [c for c in factor_cols if c in df.columns]
+    if not factor_cols:
+        st.warning("未找到可用因子列")
+        return
+
+    df = df.sort_index()
+    vol_map = cal_factor_volatility_multi(df, factor_cols, windows=windows)
+    layout_cols = st.columns(min(len(factor_cols), 2)) if len(factor_cols) > 1 else [st]
+
+    for i, factor in enumerate(factor_cols):
+        fig, ax = plt.subplots(figsize=(12, 4))
+        for w in windows:
+            s = vol_map[w][factor]
+            if start is not None:
+                s = s[s.index >= pd.Timestamp(start)]
+            if end is not None:
+                s = s[s.index <= pd.Timestamp(end)]
+            ax.plot(s.index, s, lw=1.2, label=f"vol_{w}d")
+        ax.set_title(f"{factor} TS_VOL")
+        ax.grid(alpha=0.3)
+        ax.legend(loc="upper left", fontsize=8, ncol=len(windows))
+        ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=[3, 6, 9, 12]))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y%m"))
+        ax.tick_params(axis="x", labelsize=7)
+        fig.autofmt_xdate()
+        fig.tight_layout()
+        layout_cols[i % len(layout_cols)].pyplot(fig)
+        plt.close(fig)
+
+
 
 
 def cal_rolling_corr(df, factor1, factor2, sd, ed, windows=(20, 40, 60)):

@@ -18,6 +18,26 @@ INDDIR = os.path.join(BASE_DIR, "data_base", "industry_component_日频")
 MCPDIR = os.path.join(BASE_DIR, "data_base", "stk_mcp")
 
 _UNIVERSE_INDEX = {"沪深300": "000300.XSHG", "中证500": "000905.XSHG", "中证1000": "000852.XSHG", "上证50": "000016.XSHG","中证2000":"932000.INDX"}
+_WEIGHT_FILES = {
+    "866011.RI": "866011.RI_19_26D_dict.pkl",
+    "932000.INDX": "932000.INDX_20_26D_dict.pkl",
+    "000300.XSHG": "000300.XSHG_20_26D_dict.pkl",
+    "000905.XSHG": "000905.XSHG_20_26D_dict.pkl",
+    "000852.XSHG": "000852.XSHG_20_26D_dict.pkl",
+    "000016.XSHG": "000016.XSHG_20_26D_dict.pkl",
+}
+_FETCHERS = {
+    "866011.RI": index_weights,
+    "932000.INDX": index_weights_ex,
+    "000300.XSHG": index_weights_ex,
+    "000905.XSHG": index_weights_ex,
+    "000852.XSHG": index_weights_ex,
+    "000016.XSHG": index_weights_ex,
+}
+INDUSTRY_UNIVERSES = ['石油石化', '煤炭', '有色金属', '电力及公用事业', '钢铁', '基础化工', '建筑', '建材', '轻工制造',
+       '机械', '电力设备及新能源', '国防军工', '汽车', '商贸零售', '消费者服务', '家电', '纺织服装',
+       '医药', '食品饮料', '农林牧渔', '银行', '非银行金融', '房地产', '综合金融', '交通运输', '电子',
+       '通信', '计算机', '传媒', '综合']
 
 # ── 简易 parquet 缓存：同一文件整个会话只读一次 ──
 _pq = {}
@@ -45,28 +65,29 @@ def _append_parquet(new_df, base_dir):
 def update_Aret(end):
     """增量更新成分股、收益率、行业、市值四类数据至 end 日期"""
     # ① 成分股：检查增量
-    df = pd.read_pickle(os.path.join(ACPDIR, "866011.RI_19_26D_dict.pkl"))
-    df_2000 = pd.read_pickle(os.path.join(ACPDIR, "932000.INDX_20_26D_dict.pkl"))
+    data = {code: pd.read_pickle(os.path.join(ACPDIR, path)) for code, path in _WEIGHT_FILES.items()}
 
-    dates = sorted(df.keys())
+    dates = sorted(data["866011.RI"].keys())
     md = dates[-1]
     end_ts = pd.Timestamp(end)
     if end_ts <= md:
         return
 
-    temp = index_weights("866011.RI", start_date=md, end_date=end, market="cn")
-    temp_2000 = index_weights_ex("932000.INDX", start_date=md, end_date=end, market='cn')
+    temp = {
+        code: _FETCHERS[code](code, start_date=md, end_date=end, market="cn")
+        for code in _WEIGHT_FILES
+    }
 
-    new_dates = sorted(d for d in temp.index.get_level_values(0).unique() if d > md)
+    new_dates = sorted(d for d in temp["866011.RI"].index.get_level_values(0).unique() if d > md)
     if not new_dates:
         return
 
     ret_rows, ind_rows, value_rows = {}, {}, {}
     for dt in new_dates:
-        df[dt] = temp.loc[dt]["weight"]
-        df_2000[dt] = temp_2000.loc[dt]["weight"]
+        for code in _WEIGHT_FILES:
+            data[code][dt] = temp[code].loc[dt]["weight"]
 
-        stk = df[dt].index.tolist()
+        stk = data["866011.RI"][dt].index.tolist()
         stk_fb = [s for s in stk if not s.endswith(".BJSE")]
 
         # ② 收益率
@@ -76,21 +97,18 @@ def update_Aret(end):
         # ③ 行业
         ind_rows[dt] = get_instrument_industry(
             stk, source="citics_2019", level=1, date=dt, market="cn")["first_industry_name"]
-        
 
     # 保存成分股
-    with open(os.path.join(ACPDIR, "866011.RI_19_26D_dict.pkl"), "wb") as f:
-        pickle.dump(df, f)
-    with open(os.path.join(ACPDIR, "932000.INDX_20_26D_dict.pkl"), "wb") as f:
-        pickle.dump(df_2000, f)
-        
+    for code, path in _WEIGHT_FILES.items():
+        with open(os.path.join(ACPDIR, path), "wb") as f:
+            pickle.dump(data[code], f)
 
     # 保存收益率 + 行业（按季度 parquet）
     _append_parquet(pd.DataFrame(ret_rows).T.sort_index().astype("float32"), ARTDIR)
     _append_parquet(pd.DataFrame(ind_rows).T.sort_index(), INDDIR)
 
     # ④ 市值：全量股票批量拉取，再按季度存
-    all_stocks = sorted(set().union(*(sr.index for sr in df.values())))
+    all_stocks = sorted(set().union(*(sr.index for sr in data["866011.RI"].values())))
     mcap = get_factor(all_stocks, "a_share_market_val_in_circulation",
                       start_date=md.strftime("%Y-%m-%d"), end_date=end,
                       universe=None, expect_df=True, market="cn")
@@ -375,6 +393,67 @@ def calc_vol_percentile(cs_vol, window=252):
         hist = vals[i - window + 1 : i + 1]
         pct[i] = (hist <= vals[i]).mean()
     return pd.Series(pct, index=cs_vol.index, name="pct_rank")
+
+
+def build_market_vol_snapshot(cached_map, freq="daily", as_of=None, top_n=10):
+    """汇总 as_of 日全A、宽基指数和波动率前N行业的快照指标。"""
+    lookback = 252 if freq == "daily" else 52
+    as_of = pd.Timestamp(as_of) if as_of is not None else None
+
+    def _last_row(universe):
+        df = cached_map.get(universe)
+        if df is None or df.empty:
+            return None
+        if as_of is None:
+            row = df.iloc[-1]
+            ts = df.index[-1]
+        else:
+            sub = df.loc[df.index <= as_of]
+            if sub.empty:
+                return None
+            row = sub.iloc[-1]
+            ts = sub.index[-1]
+        pct = calc_vol_percentile(df["cs_vol"], window=lookback)
+        return {
+            "date": ts,
+            "universe": universe,
+            "cs_vol": row.get("cs_vol", np.nan),
+            "pct_rank": pct.loc[ts] if ts in pct.index else np.nan,
+            "up_pct": row.get("up_pct", np.nan),
+            "down_pct": row.get("down_pct", np.nan),
+        }
+
+    rows = []
+    for universe in ["全A", *list(_UNIVERSE_INDEX.keys())]:
+        item = _last_row(universe)
+        if item is not None:
+            item["group"] = "宽基" if universe != "全A" else "全A"
+            rows.append(item)
+
+    industry_rows = []
+    for universe in INDUSTRY_UNIVERSES:
+        item = _last_row(universe)
+        if item is not None:
+            item["group"] = "行业"
+            industry_rows.append(item)
+
+    industry_rows = sorted(industry_rows, key=lambda x: x["cs_vol"], reverse=True)[:top_n]
+    rows.extend(industry_rows)
+
+    if not rows:
+        return pd.DataFrame(columns=["日期", "类别", "分域", "波动率", "历史分位数", "上涨比例", "下跌比例"])
+
+    out = pd.DataFrame(rows)
+    out = out.rename(columns={
+        "date": "日期",
+        "group": "类别",
+        "universe": "分域",
+        "cs_vol": "波动率",
+        "pct_rank": "历史分位数",
+        "up_pct": "上涨比例",
+        "down_pct": "下跌比例",
+    })
+    return out[["日期", "类别", "分域", "波动率", "历史分位数", "上涨比例", "下跌比例"]]
 
 
 def _fmt_dates(ax):
