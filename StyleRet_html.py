@@ -162,7 +162,7 @@ st.title("行情面板")
 st.sidebar.header("配置")
 st.session_state.sd = st.sidebar.date_input("起始", pd.Timestamp("2020-01-02"), max_value=pd.Timestamp("2036-03-25"))
 st.session_state.ed = st.sidebar.date_input("结束", last_trading_day(), max_value=pd.Timestamp("2036-03-25"))
-mode = st.sidebar.radio("模式", ["Barra大类综合", "Barra单因子详细", "基差成本监控", "全市场波动"])
+mode = st.sidebar.radio("模式", ["Barra大类综合", "Barra单因子详细", "基差成本监控", "全市场波动", "超额回撤复盘"])
 
 sd = pd.Timestamp(st.session_state.sd)
 ed = pd.Timestamp(st.session_state.ed)
@@ -593,6 +593,44 @@ elif mode == "全市场波动":
     st.dataframe(_tbl.style.format({c: "{:.4f}" for c in _num_cols}, na_rep="-"),
                  use_container_width=True, height=400)
     st.download_button("下载 CSV", csv, _fname, "text/csv")
+
+elif mode == "超额回撤复盘":
+    from helpfunc_specificr import vol_pipeline, event_vol_analysis, plot_vol_summary, plot_vol_growth
+
+    st.subheader("📉 超额回撤复盘")
+
+    _cache_key = f"excess_dd_{sd.date()}_{ed.date()}"
+    if _cache_key not in st.session_state:
+        events = pd.read_excel(os.path.join(BASE_DIR, "comb", "outputs",
+                                            "Alpha私募超额指数_回撤分析.xlsx"),
+                               sheet_name="共性回撤期")
+        summary = vol_pipeline(str(sd.date()), str(ed.date()))
+        result = event_vol_analysis(events, summary, current_date=str(ed.date()))
+        st.session_state[_cache_key] = (summary, result, events)
+    summary, result, events = st.session_state[_cache_key]
+
+    st.pyplot(plot_vol_summary(summary, events=events)); plt.close()
+    st.pyplot(plot_vol_growth(summary)); plt.close()
+
+    st.markdown("**事件触发前后波动率对比 (%)**")
+    num_cols = [c for c in result.columns if c.startswith("前5_") or c.startswith("后5_")]
+    s = result.style.format({c: "{:.2f}" for c in num_cols}, na_rep="-")
+    s = s.bar(subset=["前5_avg_vol"], color="#5B8FF9")
+    s = s.bar(subset=["前5_avg_vol_rank"], color="#d65f5f", vmin=0, vmax=100)
+    for c in ["前5_vol_growth", "后5_vol_growth"]:
+        s = s.bar(subset=[c], align="zero", color=["#5fba7d", "#d65f5f"])
+    html_tbl = s.set_table_styles([
+        {"selector": "td, th", "props": [("padding", "5px 10px"), ("text-align", "right"), ("white-space", "nowrap")]},
+        {"selector": "th", "props": [("text-align", "left"), ("font-weight", "bold")]},
+    ]).to_html()
+    st.markdown(f"""<div style="overflow-x:auto; width:100%;">{html_tbl}</div>""", unsafe_allow_html=True)
+
+    # --- 复盘 MD 文档展示 ---
+    st.markdown("---")
+    st.subheader("📄 复盘文档")
+    st.caption("章节导览：一、数据现象  二、市场环境还原  三、原因分析  四、过程时间线  五、影响与启示  六、矛盾检查  七、附录")
+    from helpfunc_specificr import render_summary_md
+    render_summary_md(os.path.join(BASE_DIR, "comb", "end_input", "summary"))
 
 else:
     sub_cat = st.radio("类型", ["风格因子", "行业因子"], horizontal=True)
