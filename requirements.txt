@@ -6,3 +6,4 @@ seaborn>=0.13
 rqdatac
 configparser
 streamlit_change_language
+openpyxl
